@@ -1,12 +1,9 @@
-#!/bin/bash
+## Updated for Ubuntu 24.04 LTS
 
-## This script assumes you already set up your SSH access, firewall, etc. 
-## If not, run /ubuntu/setup.sh script first.
-##
 ## Usage:
-## sudo bash -c "$(curl -sS https://raw.githubusercontent.com/pietrorea/scripts/master/ubuntu/install-wordpress.sh)"
-##
+## sudo bash -c "$(curl -sS https://raw.githubusercontent.com/pietrorea/scripts/master/ubuntu/setup.sh)"
 
+#!/bin/bash
 set -e
 
 if [[ "$EUID" -ne 0 ]]; then
@@ -14,204 +11,82 @@ if [[ "$EUID" -ne 0 ]]; then
   exit
 fi
 
-WP_DB_NAME=wordpress
-WP_DB_ADMIN_USER=wpadmin
-
 echo "HOSTNAME:"
 read HOSTNAME
 echo
 
-echo "MySQL password for wpadmin user:"
-echo "> 8 chars, including numeric, mixed case, and special characters"
-read -s MYSQL_WP_ADMIN_USER_PASSWORD
+echo "Admin SSH public key:"
+read SSH_PUBLIC_KEY
 echo
 
-## Ubuntu updates and dependencies
-echo "Starting system update and dependency installation..."
+echo "Admin username:"
+read ADMIN_USERNAME
+echo
+
+echo "Admin group name:"
+read ADMIN_GROUP_NAME
+echo
+
+echo "Project name (used for sudoers.d file):"
+read PROJECT_NAME
+echo
+
+
+# Validate PROJECT_NAME so sudoers.d parsing can succeed
+if [[ "$PROJECT_NAME" =~ [^a-zA-Z0-9_-] ]]; then
+  echo "Error: Project name can only contain letters, numbers, hyphens (-), and underscores (_)."
+  echo "Avoid periods (.), slashes (/), spaces, and other special characters."
+  exit 1
+fi
+echo
+
+echo "$HOSTNAME" > /etc/hostname
+hostname -F /etc/hostname
+
+# Add admin user (no password access)
+
+useradd -s /bin/bash -m $ADMIN_USERNAME
+cd /home/$ADMIN_USERNAME
+mkdir -p .ssh
+cat > .ssh/authorized_keys <<EOF
+$SSH_PUBLIC_KEY
+EOF
+
+chmod 700 .ssh
+chmod 600 .ssh/authorized_keys
+chown -R $ADMIN_USERNAME:$ADMIN_USERNAME .ssh
+
+# Create admin group
+
+groupadd $ADMIN_GROUP_NAME --system -f
+usermod -aG $ADMIN_GROUP_NAME $ADMIN_USERNAME
+
+cat > /etc/sudoers.d/$PROJECT_NAME <<EOF
+%$ADMIN_GROUP_NAME ALL=(ALL) NOPASSWD:ALL
+EOF
+
+chmod 0440 /etc/sudoers.d/$PROJECT_NAME
+visudo -c
+
+# SSH setup
+
+cat > /etc/ssh/sshd_config <<EOF
+#	$OpenBSD: sshd_config,v 1.103 2018/04/09 20:41:22 tj Exp $
+# This is the sshd server system-wide configuration file.
+Include /etc/ssh/sshd_config.d/*.conf
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM yes
+X11Forwarding no
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem	sftp	/usr/lib/openssh/sftp-server
+TrustedUserCAKeys /etc/ssh/lightsail_instance_ca.pub
+CASignatureAlgorithms +ssh-rsa
+EOF
+
+## Ubuntu updates and deps
+
 apt-get update
 apt-get -y upgrade
 apt-get -y autoremove
-echo "System update and dependency installation completed."
-
-## Wordpress dependencies (LEMP stack)
-echo "Installing WordPress dependencies (LEMP stack)..."
-apt-get install -y \
-nginx \
-mysql-server \
-php-curl \
-php-mysql \
-php-gd \
-php-intl \
-php-mbstring \
-php-soap \
-php-xml \
-php-xmlrpc \
-php-zip \
-php-fpm
-echo "WordPress dependencies installation completed."
-
-## Determine installed PHP-FPM version
-PHP_FPM_VERSION=$(php --version | grep -oP '^PHP \K[0-9]+\.[0-9]+' | head -1)
-PHP_FPM_SOCKET="/run/php/php${PHP_FPM_VERSION}-fpm.sock"
-
-# nginx setup
-echo "Configuring Nginx..."
-cat > /etc/nginx/sites-available/$HOSTNAME <<EOF
-resolver 8.8.8.8 8.8.4.4;
-server {
-  listen 80;
-  root /var/www/html/wordpress/blog;
-  index  index.php index.html index.htm;
-  server_name $HOSTNAME;
-  error_log /var/log/nginx/error.log;
-  access_log /var/log/nginx/access.log;
-  client_max_body_size 100M;
-  location / {
-    try_files \$uri \$uri/ /index.php?\$args;
-  }
-  location ~ \.php$ {
-    include snippets/fastcgi-php.conf;
-    fastcgi_pass unix:$PHP_FPM_SOCKET;
-    fastcgi_param   SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-  }
-}
-EOF
-
-rm -f /etc/nginx/sites-enabled/default
-ln -sf /etc/nginx/sites-available/$HOSTNAME /etc/nginx/sites-enabled/
-service nginx reload
-echo "Nginx configuration completed."
-
-## MySQL setup
-echo "Running mysql_secure_installation..."
-mysql_secure_installation <<EOF
-n # Skip setting the root password (auth_socket in use)
-Y # Remove anonymous users for security
-Y # Disallow root login remotely
-Y # Remove test database and access to it
-Y # Reload privilege tables to apply changes
-EOF
-echo "mysql_secure_installation completed."
-
-## MySQL setup for WordPress
-echo "Configuring MySQL for WordPress..."
-mysql -u root <<EOF
-CREATE DATABASE IF NOT EXISTS ${WP_DB_NAME};
-CREATE USER '${WP_DB_ADMIN_USER}'@'localhost' IDENTIFIED BY '${MYSQL_WP_ADMIN_USER_PASSWORD}';
-GRANT ALL ON ${WP_DB_NAME}.* TO '${WP_DB_ADMIN_USER}'@'localhost'
-EOF
-echo "MySQL configuration for WordPress completed."
-
-## Install wordpress
-echo "Installing WordPress..."
-sudo mkdir -p /var/www/html/wordpress/src
-sudo mkdir -p /var/www/html/wordpress/blog
-cd /var/www/html/wordpress/src
-sudo wget https://wordpress.org/latest.tar.gz
-sudo tar -xvf latest.tar.gz
-sudo mv latest.tar.gz wordpress-`date "+%Y-%m-%d"`.tar.gz
-sudo mv wordpress/* ../blog/
-sudo chown -R www-data:www-data /var/www/html/wordpress/blog
-echo "WordPress installation completed."
-
-## Set up wp-config.php (current as of Wordpress 5.8)
-echo "Setting up wp-config.php..."
-WP_SECURE_SALTS="$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)"
-
-WP_CONFIG_FILE=/var/www/html/wordpress/blog/wp-config.php
-cat > "${WP_CONFIG_FILE}" <<EOF
-<?php
-/**
- * The base configuration for WordPress
- *
- * The wp-config.php creation script uses this file during the installation.
- * You don't have to use the web site, you can copy this file to "wp-config.php"
- * and fill in the values.
- *
- * This file contains the following configurations:
- *
- * * MySQL settings
- * * Secret keys
- * * Database table prefix
- * * ABSPATH
- *
- * @link https://wordpress.org/support/article/editing-wp-config-php/
- *
- * @package WordPress
- */
-
-// ** MySQL settings - You can get this info from your web host ** //
-/** The name of the database for WordPress */
-define( 'DB_NAME', '${WP_DB_NAME}' );
-
-/** MySQL database username */
-define( 'DB_USER', '${WP_DB_ADMIN_USER}' );
-
-/** MySQL database password */
-define( 'DB_PASSWORD', '${MYSQL_WP_ADMIN_USER_PASSWORD}' );
-
-/** MySQL hostname */
-define( 'DB_HOST', 'localhost' );
-
-/** Database charset to use in creating database tables. */
-define( 'DB_CHARSET', 'utf8' );
-
-/** The database collate type. Don't change this if in doubt. */
-define( 'DB_COLLATE', '' );
-
-/**#@+
- * Authentication unique keys and salts.
- *
- * Change these to different unique phrases! You can generate these using
- * the {@link https://api.wordpress.org/secret-key/1.1/salt/ WordPress.org secret-key service}.
- *
- * You can change these at any point in time to invalidate all existing cookies.
- * This will force all users to have to log in again.
- *
- * @since 2.6.0
- */
-${WP_SECURE_SALTS}
-
-/**#@-*/
-
-/**
- * WordPress database table prefix.
- *
- * You can have multiple installations in one database if you give each
- * a unique prefix. Only numbers, letters, and underscores please!
- */
-\$table_prefix = 'wp_';
-
-/**
- * For developers: WordPress debugging mode.
- *
- * Change this to true to enable the display of notices during development.
- * It is strongly recommended that plugin and theme developers use WP_DEBUG
- * in their development environments.
- *
- * For information on other constants that can be used for debugging,
- * visit the documentation.
- *
- * @link https://wordpress.org/support/article/debugging-in-wordpress/
- */
-define( 'WP_DEBUG', false );
-
-/* Add any custom values between this line and the "stop editing" line. */
-
-
-
-/* That's all, stop editing! Happy publishing. */
-
-/** Absolute path to the WordPress directory. */
-if ( ! defined( 'ABSPATH' ) ) {
-	define( 'ABSPATH', __DIR__ . '/' );
-}
-
-/** Sets up WordPress vars and included files. */
-require_once ABSPATH . 'wp-settings.php';
-EOF
-
-sudo chown -R www-data:www-data "${WP_CONFIG_FILE}"
-echo "wp-config.php setup completed."
-
-echo "WordPress installation and configuration completed successfully!"
