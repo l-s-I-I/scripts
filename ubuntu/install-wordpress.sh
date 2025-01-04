@@ -1,3 +1,5 @@
+#!/bin/bash
+
 ## This script assumes you already set up your SSH access, firewall, etc. 
 ## If not, run /ubuntu/setup.sh script first.
 ##
@@ -5,7 +7,6 @@
 ## sudo bash -c "$(curl -sS https://raw.githubusercontent.com/pietrorea/scripts/master/ubuntu/install-wordpress.sh)"
 ##
 
-#!/bin/bash
 set -e
 
 if [[ "$EUID" -ne 0 ]]; then
@@ -20,24 +21,20 @@ echo "HOSTNAME:"
 read HOSTNAME
 echo
 
-echo "MySQL password for root user:"
-echo "> 8 chars, including numeric, mixed case, and special characters"
-read -s MYSQL_ROOT_PASSWORD
-echo
-
 echo "MySQL password for wpadmin user:"
 echo "> 8 chars, including numeric, mixed case, and special characters"
 read -s MYSQL_WP_ADMIN_USER_PASSWORD
 echo
 
 ## Ubuntu updates and dependencies
-
+echo "Starting system update and dependency installation..."
 apt-get update
 apt-get -y upgrade
 apt-get -y autoremove
+echo "System update and dependency installation completed."
 
 ## Wordpress dependencies (LEMP stack)
-
+echo "Installing WordPress dependencies (LEMP stack)..."
 apt-get install -y \
 nginx \
 mysql-server \
@@ -51,9 +48,14 @@ php-xml \
 php-xmlrpc \
 php-zip \
 php-fpm
+echo "WordPress dependencies installation completed."
+
+## Determine installed PHP-FPM version
+PHP_FPM_VERSION=$(php --version | grep -oP '^PHP \K[0-9]+\.[0-9]+' | head -1)
+PHP_FPM_SOCKET="/run/php/php${PHP_FPM_VERSION}-fpm.sock"
 
 # nginx setup
-
+echo "Configuring Nginx..."
 cat > /etc/nginx/sites-available/$HOSTNAME <<EOF
 resolver 8.8.8.8 8.8.4.4;
 server {
@@ -69,7 +71,7 @@ server {
   }
   location ~ \.php$ {
     include snippets/fastcgi-php.conf;
-    fastcgi_pass unix:/run/php/php7.4-fpm.sock;
+    fastcgi_pass unix:$PHP_FPM_SOCKET;
     fastcgi_param   SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
   }
 }
@@ -78,24 +80,30 @@ EOF
 rm -f /etc/nginx/sites-enabled/default
 ln -sf /etc/nginx/sites-available/$HOSTNAME /etc/nginx/sites-enabled/
 service nginx reload
+echo "Nginx configuration completed."
 
 ## MySQL setup
-
-mysql -u root <<EOF
-SET PASSWORD FOR root@localhost = '${ROOT_PASSWORD}';
-FLUSH PRIVILEGES;
+echo "Running mysql_secure_installation..."
+mysql_secure_installation <<EOF
+n # Skip setting the root password (auth_socket in use)
+Y # Remove anonymous users for security
+Y # Disallow root login remotely
+Y # Remove test database and access to it
+Y # Reload privilege tables to apply changes
 EOF
+echo "mysql_secure_installation completed."
 
-mysql_secure_installation -u root --password="${MYSQL_ROOT_PASSWORD}" --use-default
-
-mysql -u root --password="${MYSQL_ROOT_PASSWORD}" <<EOF
+## MySQL setup for WordPress
+echo "Configuring MySQL for WordPress..."
+mysql -u root <<EOF
 CREATE DATABASE IF NOT EXISTS ${WP_DB_NAME};
 CREATE USER '${WP_DB_ADMIN_USER}'@'localhost' IDENTIFIED BY '${MYSQL_WP_ADMIN_USER_PASSWORD}';
 GRANT ALL ON ${WP_DB_NAME}.* TO '${WP_DB_ADMIN_USER}'@'localhost'
 EOF
+echo "MySQL configuration for WordPress completed."
 
 ## Install wordpress
-
+echo "Installing WordPress..."
 sudo mkdir -p /var/www/html/wordpress/src
 sudo mkdir -p /var/www/html/wordpress/blog
 cd /var/www/html/wordpress/src
@@ -104,13 +112,14 @@ sudo tar -xvf latest.tar.gz
 sudo mv latest.tar.gz wordpress-`date "+%Y-%m-%d"`.tar.gz
 sudo mv wordpress/* ../blog/
 sudo chown -R www-data:www-data /var/www/html/wordpress/blog
+echo "WordPress installation completed."
 
 ## Set up wp-config.php (current as of Wordpress 5.8)
-
+echo "Setting up wp-config.php..."
 WP_SECURE_SALTS="$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)"
 
 WP_CONFIG_FILE=/var/www/html/wordpress/blog/wp-config.php
-cat > '${WP_CONFIG_FILE}' <<EOF
+cat > "${WP_CONFIG_FILE}" <<EOF
 <?php
 /**
  * The base configuration for WordPress
@@ -171,7 +180,7 @@ ${WP_SECURE_SALTS}
  * You can have multiple installations in one database if you give each
  * a unique prefix. Only numbers, letters, and underscores please!
  */
-$table_prefix = 'wp_';
+\$table_prefix = 'wp_';
 
 /**
  * For developers: WordPress debugging mode.
@@ -202,4 +211,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 require_once ABSPATH . 'wp-settings.php';
 EOF
 
-sudo chown -R www-data:www-data '${WP_CONFIG_FILE}'
+sudo chown -R www-data:www-data "${WP_CONFIG_FILE}"
+echo "wp-config.php setup completed."
+
+echo "WordPress installation and configuration completed successfully!"
