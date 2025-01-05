@@ -6,19 +6,20 @@ set -e
 # e.g. ./ssl.sh mydomain.com
 #
 # LetsEncrypt will get SSL cert for $HOSTNAME
-# LetsEncryypt will also modify the nginx config
-
-HOSTNAME=$1
+# LetsEncrypt will also modify the nginx config
+#
+# Usage:
+# sudo bash -c "$(curl -sS https://raw.githubusercontent.com/pietrorea/scripts/master/ssl.sh)"
+#
 
 if [[ "$EUID" -ne 0 ]]; then
   echo "Error: Please run as root with sudo."
   exit
 fi
 
-if [ -z "$HOSTNAME" ]; then
-  echo "Error: Pass in the hostname as the first parameter."
-  exit
-fi
+echo "HOSTNAME:"
+read HOSTNAME
+echo
 
 snap install core
 snap refresh core
