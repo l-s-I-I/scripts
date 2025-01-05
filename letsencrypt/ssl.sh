@@ -9,7 +9,7 @@ set -e
 # LetsEncrypt will also modify the nginx config
 #
 # Usage:
-# sudo bash -c "$(curl -sS https://raw.githubusercontent.com/pietrorea/scripts/master/ssl.sh)"
+# sudo bash -c "$(curl -sS https://raw.githubusercontent.com/pietrorea/scripts/refs/heads/master/letsencrypt/ssl.sh)"
 #
 
 if [[ "$EUID" -ne 0 ]]; then
