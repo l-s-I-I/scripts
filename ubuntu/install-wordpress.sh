@@ -102,17 +102,16 @@ GRANT ALL ON ${WP_DB_NAME}.* TO '${WP_DB_ADMIN_USER}'@'localhost'
 EOF
 echo "MySQL configuration for WordPress completed."
 
-## Install wordpress
-echo "Installing WordPress..."
+echo "Installing WordPress 6.7.2..."
 sudo mkdir -p /var/www/html/wordpress/src
 sudo mkdir -p /var/www/html/wordpress/blog
 cd /var/www/html/wordpress/src
-sudo wget https://wordpress.org/latest.tar.gz
-sudo tar -xvf latest.tar.gz
-sudo mv latest.tar.gz wordpress-`date "+%Y-%m-%d"`.tar.gz
+sudo wget https://wordpress.org/wordpress-6.7.2.tar.gz
+sudo tar -xvf wordpress-6.7.2.tar.gz
+sudo mv wordpress-6.7.2.tar.gz wordpress-`date "+%Y-%m-%d"`.tar.gz
 sudo mv wordpress/* ../blog/
 sudo chown -R www-data:www-data /var/www/html/wordpress/blog
-echo "WordPress installation completed."
+echo "WordPress 6.7.2 installation completed."
 
 ## Set up wp-config.php (current as of Wordpress 5.8)
 echo "Setting up wp-config.php..."
